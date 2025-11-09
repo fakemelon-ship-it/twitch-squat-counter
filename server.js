@@ -1,24 +1,21 @@
-// server.js – Twitch "10 Squats" Counter Bot for Render
 import express from "express";
 import fs from "fs";
 import puppeteer from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
 
-
 const app = express();
-const PORT = process.env.PORT || 3000;
-const CHANNEL = "deathknightrealofficial"; // Twitch channel name
+const PORT = process.env.PORT || 10000; // Render auto-assigns this
+const CHANNEL = "deathknightrealofficial";
 const DB_FILE = "count.json";
 
-// make sure the file exists
+// ensure file exists
 if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, JSON.stringify({ count: 0 }));
 
 const readCount = () => JSON.parse(fs.readFileSync(DB_FILE)).count;
 const writeCount = (val) => fs.writeFileSync(DB_FILE, JSON.stringify({ count: val }));
 
-// main counter page for OBS
+// main counter page
 app.get("/counter", (req, res) => {
-  const c = readCount();
   res.send(`
     <html><head>
     <style>
@@ -29,7 +26,7 @@ app.get("/counter", (req, res) => {
     </style></head>
     <body>
       <h1>Total Squats</h1>
-      <div id="count">${c}</div>
+      <div id="count">${readCount()}</div>
       <script>
         setInterval(async ()=>{
           const r = await fetch('/value');
@@ -43,55 +40,70 @@ app.get("/counter", (req, res) => {
 
 app.get("/value", (req, res) => res.json({ count: readCount() }));
 
-// Twitch watcher (runs in headless Chrome)
-async function startWatcher() {
-  const browser = await puppeteer.launch({
-  args: chromium.args,
-  defaultViewport: chromium.defaultViewport,
-  executablePath: await chromium.executablePath(),
-  headless: chromium.headless,
+// optional reset endpoint
+app.get("/reset", (req, res) => {
+  writeCount(0);
+  res.send("Counter reset to 0");
 });
 
-  const page = await browser.newPage();
-  await page.goto(`https://www.twitch.tv/${CHANNEL}`, { waitUntil: "domcontentloaded" });
+// Twitch watcher (runs headless)
+async function startWatcher() {
+  try {
+    const executablePath = await chromium.executablePath();
+    const browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath,
+      headless: chromium.headless,
+    });
 
-  await page.exposeFunction("onRedeem", (text) => {
-    if (/redeem(ed|s)?/i.test(text) && /10\s*squats/i.test(text)) {
-      const c = readCount() + 10;
-      writeCount(c);
-      console.log(`+10 Squats! Total: ${c}`);
-    }
-  });
+    const page = await browser.newPage();
+    await page.goto(`https://www.twitch.tv/${CHANNEL}`, { waitUntil: "domcontentloaded" });
 
-  await page.evaluate(() => {
-    function findChat() {
-      return (
-        document.querySelector('[data-a-target="chat-scroller"]') ||
-        document.querySelector(".chat-scrollable-area__message-container")
-      );
-    }
-    function scanNode(n) {
-      const text = (n.innerText || n.textContent || "").trim();
-      if (/redeem(ed|s)?/i.test(text) && /10\s*squats/i.test(text))
-        window.onRedeem(text);
-    }
-    function start() {
-      const chat = findChat();
-      if (!chat) return setTimeout(start, 1000);
-      const mo = new MutationObserver((muts) => {
-        muts.forEach((m) =>
-          m.addedNodes.forEach((n) => {
-            if (n.nodeType === 1) scanNode(n);
-          })
+    await page.exposeFunction("onRedeem", (text) => {
+      if (/redeem(ed|s)?/i.test(text) && /10\s*squats/i.test(text)) {
+        const c = readCount() + 10;
+        writeCount(c);
+        console.log(`+10 Squats! Total: ${c}`);
+      }
+    });
+
+    await page.evaluate(() => {
+      function findChat() {
+        return (
+          document.querySelector('[data-a-target="chat-scroller"]') ||
+          document.querySelector(".chat-scrollable-area__message-container")
         );
-      });
-      mo.observe(chat, { childList: true, subtree: true });
-      console.log("Watching chat for 'redeemed 10 squats'...");
-    }
-    start();
-  });
+      }
+      function scanNode(n) {
+        const text = (n.innerText || n.textContent || "").trim();
+        if (/redeem(ed|s)?/i.test(text) && /10\s*squats/i.test(text))
+          window.onRedeem(text);
+      }
+      function start() {
+        const chat = findChat();
+        if (!chat) return setTimeout(start, 2000);
+        const mo = new MutationObserver((muts) => {
+          muts.forEach((m) =>
+            m.addedNodes.forEach((n) => {
+              if (n.nodeType === 1) scanNode(n);
+            })
+          );
+        });
+        mo.observe(chat, { childList: true, subtree: true });
+        console.log("Watching chat for 'redeemed 10 squats'...");
+      }
+      start();
+    });
+
+    console.log("✅ Twitch watcher running.");
+  } catch (err) {
+    console.error("❌ Watcher error:", err);
+    // Retry automatically after 30 seconds if it fails
+    setTimeout(startWatcher, 30000);
+  }
 }
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server live on port ${PORT}`));
 startWatcher();
 
