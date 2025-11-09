@@ -1,7 +1,9 @@
 // server.js – Twitch "10 Squats" Counter Bot for Render
 import express from "express";
 import fs from "fs";
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
+
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -44,9 +46,12 @@ app.get("/value", (req, res) => res.json({ count: readCount() }));
 // Twitch watcher (runs in headless Chrome)
 async function startWatcher() {
   const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+  args: chromium.args,
+  defaultViewport: chromium.defaultViewport,
+  executablePath: await chromium.executablePath(),
+  headless: chromium.headless,
+});
+
   const page = await browser.newPage();
   await page.goto(`https://www.twitch.tv/${CHANNEL}`, { waitUntil: "domcontentloaded" });
 
